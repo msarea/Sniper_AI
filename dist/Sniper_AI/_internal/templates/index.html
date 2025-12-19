@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>{{ config.get('app_name', 'Sniper AI') }} - Platinum Terminal</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <header>
+        <h1>🎯 {{ config.get('app_name', 'Sniper AI') }} <span style="font-size:0.6em; color:#50fa7b;">PLATINUM</span></h1>
+        
+        <div class="header-settings-container">
+            <button id="settings-btn" class="header-icon-btn" title="System Configuration">⚙️</button>
+        </div>
+
+        <div id="symbol-selector-container">
+            <div class="symbol-input-group">
+                <input type="text" id="symbol-input" placeholder="SYMBOL" maxlength="10">
+                <button id="change-symbol-btn">LOAD</button>
+            </div>
+            <p>Target: <span id="symbol-display">--</span></p>
+        </div>
+    </header>
+
+    {% if not config.get('alpaca_api_key') %}
+    <div class="setup-notice-bar" style="background: #ff5555; color: white; text-align: center; padding: 10px; font-weight: bold;">
+        ⚠️ SETUP REQUIRED: Trading and Alerts are disabled. Please click the ⚙️ Settings icon to configure your keys.
+    </div>
+    {% endif %}
+
+    <main style="display: flex; gap: 20px; padding: 20px;">
+        <div id="prediction-panel" style="flex: 1; min-width: 300px; background: #2a2a3a; padding: 20px; border-radius: 8px;">
+            <h2 style="text-align: center; color: #8be9fd;">AI Decision Engine</h2>
+            <div id="prediction-signal" class="signal-hold" style="font-size: 2rem; text-align: center; margin: 20px 0; padding: 15px; border-radius: 8px;">WAITING...</div>
+            <div style="text-align: center;"><span class="confluence-badge" id="confluence-score">Confluence: 0</span></div>
+
+            <div class="strategy-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;">
+                <div id="card-trend" class="strategy-card status-neutral"><h4>Trend</h4><div class="strategy-status" id="status-trend">--</div></div>
+                <div id="card-vwap" class="strategy-card status-neutral"><h4>VWAP</h4><div class="strategy-status" id="status-vwap">--</div></div>
+                <div id="card-bollinger" class="strategy-card status-neutral"><h4>Bollinger</h4><div class="strategy-status" id="status-bollinger">--</div></div>
+                <div id="card-macd" class="strategy-card status-neutral"><h4>MACD</h4><div class="strategy-status" id="status-macd">--</div></div>
+            </div>
+
+            <div style="margin: 20px 0; text-align: center;">
+                <button id="panic-btn" class="panic-button" style="width: 100%; background: #ff5555; color: white; border: none; padding: 15px; border-radius: 5px; cursor: pointer; font-weight: bold;">🚨 EMERGENCY EXIT</button>
+            </div>
+
+            <div class="metrics" style="background: #1a1a2e; padding: 15px; border-radius: 5px;">
+                <p>Entry: <span id="entry-price" style="color: #50fa7b;">--</span></p>
+                <p>Stop: <span id="sl-price" style="color: #ff5555;">--</span></p>
+                <p>Target: <span id="tp-price" style="color: #8be9fd;">--</span></p>
+            </div>
+        </div>
+
+        <div id="chart-box" style="flex: 3; position: relative; background: #1a1a2e; border: 2px solid #444; border-radius: 8px; overflow: hidden;">
+            <div id="chart-container" style="height: 600px; width: 100%;"></div>
+        </div>
+    </main>
+
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2 id="cfg-current-symbol-display" style="text-align: center; color: #8be9fd;">Configuration</h2>
+            
+            <div style="background:#2a2a3a; border:1px solid #ff5555; color:#ffaaaa; padding:10px; border-radius:4px; font-size:0.8rem; margin-bottom:15px;">
+                ⚠️ <strong>SECURITY:</strong> Credentials are encrypted in the local system path. Wipe data before sharing.
+            </div>
+
+            <div class="settings-scroll-area" style="max-height: 450px; overflow-y: auto; padding-right: 10px;">
+                
+                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 15px 0 10px 0;">Trading Logic</h3>
+                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 10px;">
+                    <label>Auto-Trading Enabled:</label>
+                    <input type="checkbox" id="cfg-trading-enabled" style="width:auto; transform: scale(1.5);" {% if config.get('trading_enabled') %}checked{% endif %}>
+                </div>
+
+                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 15px; background: #2a2a3a; padding: 10px; border-radius: 5px; border-left: 4px solid #f1fa8c;">
+                    <label style="color: #f1fa8c; font-weight: bold;">Enable Short Selling:</label>
+                    <input type="checkbox" id="cfg-short-enabled" style="width:auto; transform: scale(1.6); cursor: pointer;" {% if config.get('short_enabled') %}checked{% endif %}>
+                </div>
+
+                <div class="form-group">
+                    <label>Broker Mode:</label>
+                    <select id="cfg-broker" style="width: 100%; padding: 8px; background: #1a1a2e; color: white;">
+                        <option value="paper" {% if config.get('broker') == 'paper' %}selected{% endif %}>Paper (Demo)</option>
+                        <option value="live" {% if config.get('broker') == 'live' %}selected{% endif %}>LIVE (Real Money)</option>
+                    </select>
+                </div>
+
+                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Alpaca API Credentials</h3>
+                <div class="form-group">
+                    <label>API Key:</label>
+                    <input type="text" id="cfg-api-key" style="width: 100%; padding: 8px;" value="{{ config.get('alpaca_api_key', '') }}">
+                </div>
+                <div class="form-group">
+                    <label>Secret Key:</label>
+                    <input type="password" id="cfg-secret-key" style="width: 100%; padding: 8px;" value="{{ config.get('alpaca_secret_key', '') }}">
+                </div>
+
+                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Risk Management</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group">
+                        <label>Risk % per Trade:</label>
+                        <input type="number" step="0.1" id="cfg-risk" style="width: 100%; padding: 8px;" value="{{ config.get('risk_per_trade', '1.0') }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Max Daily Loss %:</label>
+                        <input type="number" step="0.1" id="cfg-max-loss" style="width: 100%; padding: 8px;" value="{{ config.get('max_daily_loss', '5.0') }}">
+                    </div>
+                </div>
+
+                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Telegram Alerts</h3>
+                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 10px;">
+                    <label>Enable Alerts:</label>
+                    <input type="checkbox" id="cfg-tg-enabled" style="width:auto; transform: scale(1.5);" {% if config.get('telegram_enabled') %}checked{% endif %}>
+                </div>
+                <div class="form-group">
+                    <label>Bot Token:</label>
+                    <input type="password" id="cfg-tg-token" style="width: 100%; padding: 8px;" value="{{ config.get('telegram_bot_token', '') }}">
+                </div>
+                <div class="form-group">
+                    <label>Chat ID:</label>
+                    <input type="text" id="cfg-tg-chat" style="width: 100%; padding: 8px;" value="{{ config.get('telegram_chat_id', '') }}">
+                </div>
+            </div>
+
+            <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 20px;">
+                <button id="save-settings-btn" class="save-button" style="flex: 2; padding: 15px; background: #50fa7b; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: #1a1a2e;">💾 SAVE & RESTART</button>
+                <button id="wipe-data-btn" class="wipe-button" style="flex: 1; padding: 15px; background: #ff5555; color: white; border: none; border-radius: 5px; cursor: pointer;">🗑️ WIPE</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="/static/js/dashboard.js?v=5"></script>
+</body>
+</html>

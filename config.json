@@ -1,0 +1,22 @@
+{
+    "_WARNING": "DO NOT SHARE THIS FILE. IT CONTAINS YOUR PRIVATE API KEYS.",
+    "app_name": "Sniper AI",
+    "version": "1.0.0",
+    "license_key": "TRIAL_MODE",
+    
+    "trading_enabled": false,
+    "telegram_enabled": false,
+    "broker": "paper", 
+    
+    "telegram_token": "YOUR_TOKEN_HERE",
+    "telegram_chat_id": "YOUR_ID_HERE",
+    "alpaca_api_key": "YOUR_KEY_HERE",
+    "alpaca_secret_key": "YOUR_SECRET_HERE",
+    
+    "risk_settings": {
+        "risk_reward_ratio": 2.0,
+        "risk_per_trade_percent": 0.01,
+        "max_slippage": 0.005,
+        "max_daily_loss_percent": 0.03
+    }
+}

@@ -1,0 +1,13 @@
+flask
+flask-socketio
+pytz
+eventlet
+alpaca-trade-api
+yfinance
+pandas
+numpy
+requests
+opencv-python
+pyinstaller
+aiohttp>=3.9.3
+urllib3

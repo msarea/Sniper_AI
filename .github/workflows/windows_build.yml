@@ -1,22 +1,9 @@
-name: Build Windows Exe
-on: [push]
-jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Install Dependencies
+- name: Build EXE with PyInstaller
         run: |
-          pip install flask flask-socketio pandas numpy requests pytz eventlet pyinstaller
-      - name: Build with PyInstaller
-        run: |
-          pyinstaller --noconfirm --onefile --windowed --add-data "templates;templates" --add-data "static;static" --add-data "src;src" app.py
-      - name: Upload Artifact
+          pyinstaller --noconfirm --onefile --windowed --add-data "templates;templates" --add-data "static;static" --add-data "src;src" --name "Sniper_AI" app.py
+
+      - name: Upload Finished EXE
         uses: actions/upload-artifact@v4
         with:
-          name: Sniper_AI_Windows
-          path: dist/app.exe
+          name: Sniper_AI_Windows_Version
+          path: dist/Sniper_AI.exe

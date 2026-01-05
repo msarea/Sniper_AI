@@ -21,8 +21,7 @@ import struct
 
 import dns.exception
 
-
-def inet_ntoa(address: bytes) -> str:
+def inet_ntoa(address):
     """Convert an IPv4 address in binary form to text form.
 
     *address*, a ``bytes``, the IPv4 address in binary form.
@@ -32,45 +31,30 @@ def inet_ntoa(address: bytes) -> str:
 
     if len(address) != 4:
         raise dns.exception.SyntaxError
-    return f"{address[0]}.{address[1]}.{address[2]}.{address[3]}"
+    return ('%u.%u.%u.%u' % (address[0], address[1],
+                             address[2], address[3]))
 
-
-def inet_aton(text: str | bytes) -> bytes:
+def inet_aton(text):
     """Convert an IPv4 address in text form to binary form.
 
-    *text*, a ``str`` or ``bytes``, the IPv4 address in textual form.
+    *text*, a ``str``, the IPv4 address in textual form.
 
     Returns a ``bytes``.
     """
 
     if not isinstance(text, bytes):
-        btext = text.encode()
-    else:
-        btext = text
-    parts = btext.split(b".")
+        text = text.encode()
+    parts = text.split(b'.')
     if len(parts) != 4:
         raise dns.exception.SyntaxError
     for part in parts:
         if not part.isdigit():
             raise dns.exception.SyntaxError
-        if len(part) > 1 and part[0] == ord("0"):
+        if len(part) > 1 and part[0] == ord('0'):
             # No leading zeros
             raise dns.exception.SyntaxError
     try:
         b = [int(part) for part in parts]
-        return struct.pack("BBBB", *b)
+        return struct.pack('BBBB', *b)
     except Exception:
         raise dns.exception.SyntaxError
-
-
-def canonicalize(text: str | bytes) -> str:
-    """Verify that *address* is a valid text form IPv4 address and return its
-    canonical text form.
-
-    *text*, a ``str`` or ``bytes``, the IPv4 address in textual form.
-
-    Raises ``dns.exception.SyntaxError`` if the text is not valid.
-    """
-    # Note that inet_aton() only accepts canonial form, but we still run through
-    # inet_ntoa() to ensure the output is a str.
-    return inet_ntoa(inet_aton(text))

@@ -1,21 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all  # <--- Add this line at the very top
 
-datas = [('templates', 'templates'), ('static', 'static')]
-binaries = []
-hiddenimports = ['engineio.async_drivers.eventlet']
-tmp_ret = collect_all('eventlet')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# Trigger a total collection of the dns library
 tmp_ret = collect_all('dns')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-
 
 a = Analysis(
     ['app.py'],
     pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=tmp_ret[1],    # <--- Add tmp_ret[1]
+    datas=tmp_ret[0] + [('templates', 'templates'), ('static', 'static')], # <--- Add tmp_ret[0]
+    hiddenimports=tmp_ret[2] + [
+        'eventlet.hubs.epolls', 
+        'eventlet.hubs.kqueue', 
+        'eventlet.hubs.selects',
+        'engineio.async_drivers.eventlet', 
+        'flask_socketio.async_eventlet',
+        'dns.rdtypes.ANY',
+        'dns.rdtypes.IN',
+        'dns.rdtypes.CH'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

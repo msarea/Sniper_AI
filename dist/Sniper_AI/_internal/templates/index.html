@@ -4,26 +4,65 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
     <title>{{ config.get('app_name', 'Sniper AI') }} - Platinum Terminal</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        /* Ensuring the header layout is flexible and clean */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 25px;
+            background: #1a1a2e;
+            border-bottom: 1px solid #444;
+        }
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        /* This spacer pushes everything after it to the right */
+        .header-spacer {
+            flex-grow: 1;
+        }
+        .stats-container {
+            display: flex;
+            align-items: center;
+            gap: 25px;
+            margin-right: 30px; /* Space between P/L and settings icon */
+        }
+    </style>
 </head>
 <body>
     <header>
-        <h1>🎯 {{ config.get('app_name', 'Sniper AI') }} <span style="font-size:0.6em; color:#50fa7b;">PLATINUM</span></h1>
-        
-        <div class="header-settings-container">
-            <button id="settings-btn" class="header-icon-btn" title="System Configuration">⚙️</button>
+        <div class="header-brand">
+            <img src="{{ url_for('static', filename='logo.png') }}?v=2" class="trading-logo" alt="Sniper Logo" style="height: 40px;">
+            <h1 style="margin: 0; font-size: 1.4rem;">SNIPER AI <span style="font-size:0.6em; color: var(--success-green);">PLATINUM</span></h1>
         </div>
 
-        <div id="symbol-selector-container">
-            <div class="symbol-input-group">
-                <input type="text" id="symbol-input" placeholder="SYMBOL" maxlength="10">
-                <button id="change-symbol-btn">LOAD</button>
+        <div class="header-spacer"></div>
+
+        <div class="stats-container">
+            <div id="session-stats" style="display: flex; align-items: center; gap: 15px; background: rgba(0,0,0,0.3); padding: 8px 20px; border-radius: 30px; border: 1px solid #44475a;">
+                <div title="Total Profit for this Session">
+                    <span style="color: #6272a4; font-size: 0.75rem; font-weight: bold; text-transform: uppercase;">Total P/L:</span>
+                    <span id="total-profit" style="color: #50fa7b; font-weight: bold; font-family: 'Courier New', monospace; font-size: 1.1rem;">$0.00</span>
+                </div>
+                <button id="download-log-btn" style="background: #6272a4; color: white; border: none; padding: 6px 12px; border-radius: 5px; cursor: pointer; font-size: 0.7rem; font-weight: bold; transition: 0.3s;">📥 DOWNLOAD LOG</button>
             </div>
-            <p>Target: <span id="symbol-display">--</span></p>
+        </div>
+        
+        <div class="header-settings-container" style="display: flex; align-items: center; gap: 15px;">
+            <button id="settings-btn" class="header-icon-btn" title="System Configuration">⚙️</button>
+            
+            <div id="symbol-selector-container">
+                <div class="symbol-input-group" style="display: flex; gap: 5px;">
+                    <input type="text" id="symbol-input" placeholder="SYMBOL" maxlength="10" style="width: 80px; padding: 5px; background: #2a2a3a; color: white; border: 1px solid #444; border-radius: 4px;">
+                    <button id="change-symbol-btn" style="padding: 5px 10px; background: #6272a4; color: white; border: none; border-radius: 4px; cursor: pointer;">LOAD</button>
+                </div>
+                <p style="font-size: 0.75rem; margin-top: 2px; text-align: right; color: #6272a4;">Target: <span id="symbol-display" style="color: #8be9fd;">--</span></p>
+            </div>
         </div>
     </header>
 
@@ -34,109 +73,117 @@
     {% endif %}
 
     <main style="display: flex; gap: 20px; padding: 20px;">
-        <div id="prediction-panel" style="flex: 1; min-width: 300px; background: #2a2a3a; padding: 20px; border-radius: 8px;">
-            <h2 style="text-align: center; color: #8be9fd;">AI Decision Engine</h2>
-            <div id="prediction-signal" class="signal-hold" style="font-size: 2rem; text-align: center; margin: 20px 0; padding: 15px; border-radius: 8px;">WAITING...</div>
+        <div id="prediction-panel" style="flex: 1; min-width: 320px; background: #2a2a3a; padding: 20px; border-radius: 8px; border: 1px solid #444;">
+            <div id="regime-badge" style="text-align: center; padding: 8px; border-radius: 4px; font-weight: bold; margin-bottom: 10px; background: #44475a; color: #f8f8f2;">
+                MODE: <span id="regime-status">INITIALIZING...</span>
+            </div>
+            <h2 style="text-align: center; color: #8be9fd; margin-top: 0;">AI Decision Engine</h2>
+            <div id="prediction-signal" class="signal-hold" style="font-size: 2rem; text-align: center; margin: 15px 0; padding: 15px; border-radius: 8px; background: #1a1a2e;">WAITING...</div>
+            
+            <div style="display: flex; justify-content: space-around; background: #1a1a2e; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-family: monospace; font-size: 0.85rem;">
+                <div title="Trend Strength">ADX: <span id="val-adx" style="color: #bd93f9;">--</span></div>
+                <div title="Momentum">RSI: <span id="val-rsi" style="color: #ffb86c;">--</span></div>
+                <div title="Volatility">ATR: <span id="val-atr" style="color: #ff79c6;">--</span></div>
+            </div>
             <div style="text-align: center;"><span class="confluence-badge" id="confluence-score">Confluence: 0</span></div>
-
             <div class="strategy-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px;">
                 <div id="card-trend" class="strategy-card status-neutral"><h4>Trend</h4><div class="strategy-status" id="status-trend">--</div></div>
                 <div id="card-vwap" class="strategy-card status-neutral"><h4>VWAP</h4><div class="strategy-status" id="status-vwap">--</div></div>
                 <div id="card-bollinger" class="strategy-card status-neutral"><h4>Bollinger</h4><div class="strategy-status" id="status-bollinger">--</div></div>
                 <div id="card-macd" class="strategy-card status-neutral"><h4>MACD</h4><div class="strategy-status" id="status-macd">--</div></div>
             </div>
-
             <div style="margin: 20px 0; text-align: center;">
                 <button id="panic-btn" class="panic-button" style="width: 100%; background: #ff5555; color: white; border: none; padding: 15px; border-radius: 5px; cursor: pointer; font-weight: bold;">🚨 EMERGENCY EXIT</button>
             </div>
-
             <div class="metrics" style="background: #1a1a2e; padding: 15px; border-radius: 5px;">
                 <p>Entry: <span id="entry-price" style="color: #50fa7b;">--</span></p>
                 <p>Stop: <span id="sl-price" style="color: #ff5555;">--</span></p>
                 <p>Target: <span id="tp-price" style="color: #8be9fd;">--</span></p>
             </div>
         </div>
-
         <div id="chart-box" style="flex: 3; position: relative; background: #1a1a2e; border: 2px solid #444; border-radius: 8px; overflow: hidden;">
             <div id="chart-container" style="height: 600px; width: 100%;"></div>
         </div>
     </main>
 
+    <section id="trade-log-container" style="padding: 20px; background: #1a1a2e; margin: 20px; border-radius: 8px; border: 1px solid #444;">
+        <h3 style="color: #8be9fd; margin-bottom: 15px;">Live Execution Log & Session History</h3>
+        <table id="trade-log-table" style="width: 100%; border-collapse: collapse; text-align: left; font-family: monospace;">
+            <thead>
+                <tr style="border-bottom: 2px solid #444; color: #6272a4;">
+                    <th>TIME</th>
+                    <th>SYMBOL</th>
+                    <th>TYPE</th>
+                    <th>ENTRY</th>
+                    <th>CURRENT</th>
+                    <th>P/L %</th>
+                    <th>STATUS</th>
+                </tr>
+            </thead>
+            <tbody id="trade-log-body"></tbody>
+        </table>
+    </section>
+
     <div id="settings-modal" class="modal">
         <div class="modal-content">
             <span class="close-modal">&times;</span>
-            <h2 id="cfg-current-symbol-display" style="text-align: center; color: #8be9fd;">Configuration</h2>
-            
-            <div style="background:#2a2a3a; border:1px solid #ff5555; color:#ffaaaa; padding:10px; border-radius:4px; font-size:0.8rem; margin-bottom:15px;">
-                ⚠️ <strong>SECURITY:</strong> Credentials are encrypted in the local system path. Wipe data before sharing.
-            </div>
-
-            <div class="settings-scroll-area" style="max-height: 450px; overflow-y: auto; padding-right: 10px;">
-                
-                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 15px 0 10px 0;">Trading Logic</h3>
-                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 10px;">
+            <h2 style="text-align: center; color: #8be9fd;">System Configuration</h2>
+            <div class="settings-scroll-area" style="max-height: 500px; overflow-y: auto; padding-right: 10px;">
+                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 15px 0;">Trading Logic</h3>
+                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center;">
                     <label>Auto-Trading Enabled:</label>
-                    <input type="checkbox" id="cfg-trading-enabled" style="width:auto; transform: scale(1.5);" {% if config.get('trading_enabled') %}checked{% endif %}>
+                    <input type="checkbox" id="cfg-trading-enabled" {% if config.get('trading_enabled') %}checked{% endif %}>
                 </div>
-
-                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 15px; background: #2a2a3a; padding: 10px; border-radius: 5px; border-left: 4px solid #f1fa8c;">
-                    <label style="color: #f1fa8c; font-weight: bold;">Enable Short Selling:</label>
-                    <input type="checkbox" id="cfg-short-enabled" style="width:auto; transform: scale(1.6); cursor: pointer;" {% if config.get('short_enabled') %}checked{% endif %}>
+                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center;">
+                    <label>Enable Short Selling:</label>
+                    <input type="checkbox" id="cfg-short-enabled" {% if config.get('short_enabled') %}checked{% endif %}>
                 </div>
-
+                <h3 style="color:#f1fa8c; border-bottom:1px solid #444; margin: 20px 0;">Risk Management</h3>
                 <div class="form-group">
-                    <label>Broker Mode:</label>
-                    <select id="cfg-broker" style="width: 100%; padding: 8px; background: #1a1a2e; color: white;">
-                        <option value="paper" {% if config.get('broker') == 'paper' %}selected{% endif %}>Paper (Demo)</option>
-                        <option value="live" {% if config.get('broker') == 'live' %}selected{% endif %}>LIVE (Real Money)</option>
-                    </select>
+                    <label>Daily Profit Goal ($):</label>
+                    <input type="number" id="cfg-profit-goal" value="{{ config.get('daily_profit_goal', '50.0') }}" style="width: 100%; padding: 8px;">
                 </div>
-
-                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Alpaca API Credentials</h3>
-                <div class="form-group">
-                    <label>API Key:</label>
-                    <input type="text" id="cfg-api-key" style="width: 100%; padding: 8px;" value="{{ config.get('alpaca_api_key', '') }}">
-                </div>
-                <div class="form-group">
-                    <label>Secret Key:</label>
-                    <input type="password" id="cfg-secret-key" style="width: 100%; padding: 8px;" value="{{ config.get('alpaca_secret_key', '') }}">
-                </div>
-
-                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Risk Management</h3>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
                     <div class="form-group">
                         <label>Risk % per Trade:</label>
-                        <input type="number" step="0.1" id="cfg-risk" style="width: 100%; padding: 8px;" value="{{ config.get('risk_per_trade', '1.0') }}">
+                        <input type="number" step="0.1" id="cfg-risk" value="{{ config.get('risk_per_trade', '1.0') }}">
                     </div>
                     <div class="form-group">
                         <label>Max Daily Loss %:</label>
-                        <input type="number" step="0.1" id="cfg-max-loss" style="width: 100%; padding: 8px;" value="{{ config.get('max_daily_loss', '5.0') }}">
+                        <input type="number" step="0.1" id="cfg-max-loss" value="{{ config.get('max_daily_loss', '5.0') }}">
                     </div>
                 </div>
-
-                <h3 style="color:#50fa7b; border-bottom:1px solid #444; margin: 20px 0 10px 0;">Telegram Alerts</h3>
-                <div class="form-group" style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="color:#bd93f9; border-bottom:1px solid #444; margin: 20px 0;">API Credentials</h3>
+                <div class="form-group">
+                    <label>Alpaca API Key:</label>
+                    <input type="text" id="cfg-api-key" value="{{ config.get('alpaca_api_key', '') }}">
+                </div>
+                <div class="form-group">
+                    <label>Alpaca Secret Key:</label>
+                    <input type="password" id="cfg-secret-key" value="{{ config.get('alpaca_secret_key', '') }}">
+                </div>
+                <h3 style="color:#8be9fd; border-bottom:1px solid #444; margin: 20px 0;">Telegram Notifier</h3>
+                <div class="form-group" style="display:flex; justify-content:space-between;">
                     <label>Enable Alerts:</label>
-                    <input type="checkbox" id="cfg-tg-enabled" style="width:auto; transform: scale(1.5);" {% if config.get('telegram_enabled') %}checked{% endif %}>
+                    <input type="checkbox" id="cfg-tg-enabled" {% if config.get('telegram_enabled') %}checked{% endif %}>
                 </div>
                 <div class="form-group">
                     <label>Bot Token:</label>
-                    <input type="password" id="cfg-tg-token" style="width: 100%; padding: 8px;" value="{{ config.get('telegram_bot_token', '') }}">
+                    <input type="password" id="cfg-tg-token" value="{{ config.get('telegram_bot_token', '') }}">
                 </div>
                 <div class="form-group">
                     <label>Chat ID:</label>
-                    <input type="text" id="cfg-tg-chat" style="width: 100%; padding: 8px;" value="{{ config.get('telegram_chat_id', '') }}">
+                    <input type="text" id="cfg-tg-chat" value="{{ config.get('telegram_chat_id', '') }}">
                 </div>
             </div>
-
             <div class="modal-actions" style="display: flex; gap: 10px; margin-top: 20px;">
-                <button id="save-settings-btn" class="save-button" style="flex: 2; padding: 15px; background: #50fa7b; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; color: #1a1a2e;">💾 SAVE & RESTART</button>
-                <button id="wipe-data-btn" class="wipe-button" style="flex: 1; padding: 15px; background: #ff5555; color: white; border: none; border-radius: 5px; cursor: pointer;">🗑️ WIPE</button>
+                <button id="save-settings-btn" class="save-button" style="flex: 2; background: #50fa7b; font-weight: bold; border: none; padding: 10px; border-radius: 5px;">💾 SAVE & RESTART</button>
+                <button id="wipe-data-btn" class="wipe-button" style="flex: 1; background: #ff5555; color: white; border: none; padding: 10px; border-radius: 5px;">🗑️ WIPE</button>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="/static/js/dashboard.js?v=5"></script>
+    <script src="/static/js/dashboard.js?v=6"></script>
 </body>
 </html>

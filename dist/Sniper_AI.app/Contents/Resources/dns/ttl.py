@@ -31,7 +31,7 @@ class BadTTL(dns.exception.SyntaxError):
     """DNS TTL value is not well-formed."""
 
 
-def from_text(text: str) -> int:
+def from_text(text):
     """Convert the text form of a TTL to an integer.
 
     The BIND 8 units syntax for TTLs (e.g. '1w6d4h3m10s') is supported.
@@ -60,18 +60,18 @@ def from_text(text: str) -> int:
                 if need_digit:
                     raise BadTTL
                 c = c.lower()
-                if c == "w":
+                if c == 'w':
                     total += current * 604800
-                elif c == "d":
+                elif c == 'd':
                     total += current * 86400
-                elif c == "h":
+                elif c == 'h':
                     total += current * 3600
-                elif c == "m":
+                elif c == 'm':
                     total += current * 60
-                elif c == "s":
+                elif c == 's':
                     total += current
                 else:
-                    raise BadTTL(f"unknown unit '{c}'")
+                    raise BadTTL("unknown unit '%s'" % c)
                 current = 0
                 need_digit = True
         if not current == 0:
@@ -81,10 +81,10 @@ def from_text(text: str) -> int:
     return total
 
 
-def make(value: int | str) -> int:
+def make(value):
     if isinstance(value, int):
         return value
     elif isinstance(value, str):
-        return from_text(value)
+        return dns.ttl.from_text(value)
     else:
-        raise ValueError("cannot convert value to TTL")
+        raise ValueError('cannot convert value to TTL')

@@ -1,244 +1,272 @@
 import eventlet
-import eventlet.debug
-# Absolute top to ensure all dependencies use green threads
-eventlet.monkey_patch() 
-
-import sys, os, json, logging, threading, time, requests, subprocess, webbrowser
-from flask import Flask, render_template, jsonify, request
-from flask_socketio import SocketIO
+eventlet.monkey_patch()
+import sys, os, json, logging, threading, time, requests, webbrowser
+import pandas as pd
+import numpy as np
 import pytz
+from flask import Flask, render_template, jsonify, request, send_file
+from flask_socketio import SocketIO
 from datetime import datetime
 from pathlib import Path
+from threading import Timer
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# --- LICENSE & SECURITY ---
+def verify_license():
+    EXPIRY_DATE = datetime(2026, 1, 14)
+    try:
+        response = requests.get('http://worldtimeapi.org/api/timezone/Etc/UTC', timeout=5)
+        current_date = datetime.fromisoformat(response.json()['datetime'][:10])
+    except:
+        current_date = datetime.now()
+    if current_date > EXPIRY_DATE:
+        print("❌ LICENSE EXPIRED: Please contact developer.")
+        sys.exit()
+
+verify_license()
 
 # --- 1. RESOURCE & DATA PATHS ---
 if getattr(sys, 'frozen', False):
-    # Path for PyInstaller .app bundle
     RESOURCE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 else:
-    # Path for local development
     RESOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_config_path():
-    # Persistent writable data in User Home directory (~/.sniper_ai/)
     config_dir = Path.home() / ".sniper_ai"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir / "config.json"
 
 CONFIG_PATH = get_config_path()
 
-# --- 2. CONFIGURATION HANDLER ---
+# --- 2. CONFIGURATION ---
 def load_config():
-    try:
-        if CONFIG_PATH.exists():
-            with open(CONFIG_PATH, 'r') as f:
-                return json.load(f)
-        return {
-            "trading_enabled": False, 
-            "short_enabled": False, 
-            "app_name": "Sniper AI",
-            "alpaca_api_key": "",
-            "alpaca_secret_key": "",
-            "broker": "paper",
-            "risk_per_trade": 1.0,
-            "max_daily_loss": 5.0,
-            "telegram_enabled": False,
-            "telegram_bot_token": "",
-            "telegram_chat_id": ""
-        }
-    except Exception as e:
-        print(f"Error loading config: {e}")
-        return {"trading_enabled": False}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, 'r') as f: return json.load(f)
+    return {
+        "trading_enabled": False, "short_enabled": False, "app_name": "Sniper AI",
+        "alpaca_api_key": "", "alpaca_secret_key": "", "broker": "paper",
+        "risk_per_trade": 1.0, "current_symbol": "BTCUSD"
+    }
 
 CONFIG = load_config()
 
-# --- 3. BOT CORE IMPORTS ---
 from src.indicator_calculator import calculate_indicators
 from src.trade_executor import generate_prediction_and_risk
 from src.execution import ExecutionEngine
 from src.data_fetcher import fetch_market_data
 
-# --- 4. INITIALIZATION ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("SNIPER")
+
+def init_log_file():
+    # Use CONFIG_PATH.parent to ensure it's in the same hidden directory (~/.sniper_ai/)
+    log_path = CONFIG_PATH.parent / "trade_log.csv"
+    if not log_path.exists():
+        with open(log_path, 'w') as f:
+            # Add these specific headers for your UI table to read correctly
+            f.write("TIME,SYMBOL,TYPE,ENTRY,CURRENT,P/L %,STATUS\n")
+        logger.info(f"📝 Initialized new trade log at {log_path}")
+
+init_log_file()
+
+
 
 app = Flask(__name__, 
             template_folder=os.path.join(RESOURCE_DIR, 'templates'),
             static_folder=os.path.join(RESOURCE_DIR, 'static'))
 
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+# Using async_mode='eventlet' to ensure background tasks don't block the UI
+socketio = SocketIO(app, 
+                   async_mode='eventlet', 
+                   cors_allowed_origins="*", 
+                   ping_timeout=60, 
+                   ping_interval=25)
 
-current_symbol = "BTC"
-is_running = True
+# --- GLOBAL STATE ---
+current_symbol = CONFIG.get('current_symbol', "BTCUSD")
 trader = None
-
-# --- TELEGRAM NOTIFIER ---
-def send_telegram_msg(message):
-    """Sends a notification to Telegram if enabled in settings."""
-    if CONFIG.get('telegram_enabled') and CONFIG.get('telegram_bot_token'):
-        token = CONFIG.get('telegram_bot_token')
-        chat_id = CONFIG.get('telegram_chat_id')
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": message,
-            "parse_mode": "Markdown"
-        }
-        try:
-            requests.post(url, json=payload, timeout=5)
-            logger.info("📡 Telegram Alert Sent")
-        except Exception as e:
-            logger.error(f"Telegram Notification Failed: {e}")
+session_start_equity = 0.0
+NY_TZ = pytz.timezone('America/New_York')
 
 def init_trader():
-    global trader
-    if CONFIG.get('alpaca_api_key') and CONFIG.get('alpaca_secret_key'):
+    global trader, session_start_equity
+    if CONFIG.get('alpaca_api_key'):
         try:
             trader = ExecutionEngine(CONFIG)
-            logger.info("✅ Execution Engine Initialized")
+            account = trader.api.get_account()
+            session_start_equity = float(account.equity)
+            logger.info(f"✅ Broker Synced. Starting Balance: ${session_start_equity}")
         except Exception as e:
-            logger.error(f"Trader Init Failed: {e}")
+            logger.error(f"❌ Broker Connection Failed: {e}")
 
 init_trader()
 
-# --- 5. CHART HISTORY (EST TIMEFIX) ---
+
+
+# --- CHART HELPERS ---
+def get_ny_timestamp(idx_name):
+    utc_idx = idx_name.tz_localize(pytz.utc) if idx_name.tzinfo is None else idx_name
+    return int(utc_idx.tz_convert(NY_TZ).timestamp())
+
 def send_historical_data(symbol, sid=None):
-    NY_TZ = pytz.timezone('America/New_York')
     try:
-        df = fetch_market_data(symbol, period="2d", interval="5m")
+        # Reduced period slightly to speed up initial symbol switching
+        df = fetch_market_data(symbol, CONFIG, period="3d", interval="5m")
         if not df.empty:
-            history = []
-            for idx, row in df.iterrows():
-                utc_idx = idx.tz_localize(pytz.utc) if idx.tzinfo is None else idx
-                ny_time = utc_idx.tz_convert(NY_TZ)
-                history.append({
-                    'time': int(ny_time.timestamp()), 
-                    'open': row['Open'], 'high': row['High'], 
-                    'low': row['Low'], 'close': row['Close']
-                })
-            socketio.emit('chart_history', {'symbol': symbol, 'candles': history}, room=sid)
-    except Exception as e: 
-        logger.error(f"History Error: {e}")
-
-# --- 6. ROUTES & SOCKETS ---
-@app.route('/')
-def index():
-    return render_template('index.html', config=CONFIG)
-
-@app.route('/save_config', methods=['POST'])
-def save_config():
-    global CONFIG, trader
-    try:
-        new_data = request.json
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(new_data, f, indent=4)
-        CONFIG = new_data
-        init_trader() 
-        threading.Thread(target=send_telegram_msg, args=("⚙️ *Configuration Updated Successfully*",), daemon=True).start()
-        return jsonify({"status": "success", "message": "✅ Configuration Saved"})
+            history = [{'time': get_ny_timestamp(idx), 'open': float(row['Open']), 'high': float(row['High']), 
+                        'low': float(row['Low']), 'close': float(row['Close'])} for idx, row in df.iterrows()]
+            socketio.emit('chart_history', {'symbol': symbol, 'candles': history}, to=sid)
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/panic', methods=['POST'])
-def panic():
-    if trader:
-        trader.emergency_close_all()
-        threading.Thread(target=send_telegram_msg, args=("🚨 *EMERGENCY EXIT EXECUTED*",), daemon=True).start()
-        return jsonify({"status": "success", "message": "🚨 EMERGENCY EXIT SUCCESSFUL"})
-    return jsonify({"status": "error", "message": "Engine not running"}), 400
+        logger.error(f"History Error: {e}")
 
 @socketio.on('connect')
 def handle_connect():
     send_historical_data(current_symbol, request.sid)
 
-@socketio.on('change_symbol')
-def handle_change_symbol(data):
-    global current_symbol
-    current_symbol = data.get('symbol', 'BTC').upper()
-    send_historical_data(current_symbol)
-    socketio.emit('symbol_changed', {'symbol': current_symbol})
-
-# --- 7. MARKET SCANNER (WITH SMART FILTER) ---
+# --- MARKET SCANNER (Optimized for SocketIO) ---
 def market_scanner():
-    global current_symbol, CONFIG
-    NY_TZ = pytz.timezone('America/New_York')
-    last_trade_time = 0
+    global current_symbol, session_start_equity
+    logger.info("🚀 Background Scanner Started")
     
-    # State tracking for Telegram anti-spam
-    last_notified_signal = None
-    last_notified_price = 0.0
-
-    while is_running:
+    while True:
         try:
-            symbol = current_symbol
-            df = fetch_market_data(symbol)
-            if df.empty: continue
+            live_profit = 0.0
+            if trader:
+                try:
+                    acc = trader.api.get_account()
+                    live_profit = float(acc.equity) - session_start_equity
+                except: pass
 
-            df = calculate_indicators(df)
-            analysis = generate_prediction_and_risk(df)
+            # Fetch data for the current active symbol
+            df = fetch_market_data(current_symbol,CONFIG, period="7d", interval="5m")
             
-            last_row = df.iloc[-1]
-            current_price = float(last_row['Close'])
-            utc_ts = last_row.name.tz_localize(pytz.utc) if last_row.name.tzinfo is None else last_row.name
-            
-            # Dashboard UI always updates instantly
-            socketio.emit('analysis_update', analysis)
-            socketio.emit('chart_update', {
-                'time': int(utc_ts.tz_convert(NY_TZ).timestamp()),
-                'open': last_row['Open'], 'high': last_row['High'], 
-                'low': last_row['Low'], 'close': current_price
-            })
+            if not df.empty:
+                df = calculate_indicators(df)
+                analysis = generate_prediction_and_risk(df)
+                last_row = df.iloc[-1]
+                
+                clean_payload = {
+                    'symbol': current_symbol,
+                    'total_profit': round(float(live_profit), 2),
+                    'signal': analysis.get('signal', 'HOLD'),
+                    'regime': analysis.get('regime', 'RANGING'),
+                    'confluence': analysis.get('confluence', 0),
+                    'entry_price': round(float(last_row['Close']), 2),
+                    'sl_price': round(float(analysis.get('sl_price', 0)), 2),
+                    'tp_price': round(float(analysis.get('tp_price', 0)), 2),
+                    'adx': round(float(last_row.get('ADX', 0)), 2),
+                    'rsi': round(float(last_row.get('RSI', 0)), 2),
+                    'atr': round(float(last_row.get('ATR', 0)), 2),
+                    'dashboard': {
+                        'Trend': 'BUY' if last_row['Fast_MA'] > last_row['Slow_MA'] else 'SELL',
+                        'VWAP': 'BUY' if last_row['Close'] > last_row['VWAP'] else 'SELL',
+                        'Bollinger': 'BUY' if last_row['Close'] <= last_row['BB_Lower'] else 'SELL' if last_row['Close'] >= last_row['BB_Upper'] else 'HOLD',
+                        'MACD': 'BUY' if last_row['MACD_hist'] > 0 else 'SELL'
+                    }
+                }
 
-            # --- DYNAMIC NOTIFICATION FILTER ---
-            current_signal = analysis['signal']
-            
-            # Calculate 0.1% Change Threshold (e.g., $85 for BTC @ $85k)
-            price_threshold = last_notified_price * 0.001 
-            price_moved_significantly = abs(current_price - last_notified_price) > price_threshold
+                # Sanitize NaN/Inf
+                clean_payload = {k: (0.0 if isinstance(v, float) and (pd.isna(v) or np.isinf(v)) else v) for k, v in clean_payload.items()}
+                
+                # Emit to UI
+                socketio.emit('analysis_update', clean_payload)
+                socketio.emit('chart_update', {
+                    'time': get_ny_timestamp(last_row.name),
+                    'open': float(last_row['Open']), 'high': float(last_row['High']), 
+                    'low': float(last_row['Low']), 'close': float(last_row['Close'])
+                })
 
-            if current_signal in ['BUY', 'SELL']:
-                # Alert only if Signal type changed OR Price moved > 0.1%
-                if current_signal != last_notified_signal or price_moved_significantly:
-                    # 🚀 for Long/Buy and 📉 for Short/Sell
-                    icon = "🚀" if current_signal == "BUY" else "📉"
-                    msg = (f"{icon} *NEW SIGNAL: {symbol}*\n"
-                           f"Action: `{current_signal}`\n"
-                           f"Price: `{current_price:.2f}`\n"
-                           f"Target: `{analysis['tp_price']:.2f}`\n"
-                           f"Stop: `{analysis['sl_price']:.2f}`")
-                    
-                    threading.Thread(target=send_telegram_msg, args=(msg,), daemon=True).start()
-                    
-                    # Store state for next comparison
-                    last_notified_signal = current_signal
-                    last_notified_price = current_price
-            
-            elif current_signal == 'HOLD':
-                # Reset signal state so we alert immediately on next BUY/SELL
-                last_notified_signal = 'HOLD'
-
-            # Execution Logic
-            if CONFIG.get('trading_enabled') and trader:
-                if (time.time() - last_trade_time) > 3600:
-                    trade_symbol = f"{symbol}/USD" if symbol in ['BTC', 'ETH'] else symbol
-                    if current_signal == 'BUY':
-                        if trader.execute_long(trade_symbol, analysis['entry_price'], analysis['sl_price'], analysis['tp_price']):
-                            last_trade_time = time.time()
-                    elif current_signal == 'SELL' and CONFIG.get('short_enabled'):
-                        if trader.execute_short(trade_symbol, analysis['entry_price'], analysis['sl_price'], analysis['tp_price']):
-                            last_trade_time = time.time()
-                            
         except Exception as e:
-            logger.error(f"Scanner Loop Error: {e}")
-        time.sleep(3)
+            logger.error(f"Scanner Logic Error: {e}")
+        
+        # USE socketio.sleep instead of time.sleep to prevent blocking the Eventlet hub
+        socketio.sleep(4)
 
-# --- 8. RUN ---
+# --- ROUTES ---
+
+@app.route('/')
+@app.route('/<symbol>')
+def index(symbol="BTCUSD"):
+    # 1. Ignore favicon requests so they don't change the symbol
+    if "favicon" in symbol.lower():
+        return "", 204
+
+    global current_symbol
+    # 2. Clean the symbol (Remove / or - for Alpaca compatibility)
+    current_symbol = symbol.upper().replace('-', '').replace('/', '')
+    
+    return render_template('index.html', config=CONFIG, initial_symbol=current_symbol)
+
+@app.route('/change_symbol', methods=['POST'])
+def change_symbol():
+    global current_symbol
+    try:
+        data = request.get_json()
+        new_symbol = data.get('symbol', 'BTCUSD').upper()
+        
+        # 1. Update global state
+        current_symbol = new_symbol
+        
+        # 2. Immediately send cleanup to UI so user doesn't see "Stale" metrics
+        socketio.emit('analysis_update', {
+            'symbol': 'FETCHING...',
+            'signal': 'Loading ...',
+            'confluence': 0,
+            'total_profit': 0
+        })
+        
+        # 3. Request fresh history for the new symbol
+        send_historical_data(current_symbol)
+        
+        logger.info(f"🔄 Symbol Changed to: {current_symbol}")
+        return jsonify({"status": "success", "symbol": new_symbol})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/save_settings', methods=['POST'])
+def save_settings():
+    try:
+        new_cfg = request.get_json()
+        CONFIG.update(new_cfg)
+        with open(CONFIG_PATH, 'w') as f:
+            json.dump(CONFIG, f, indent=4)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route('/download_log')
+def download_log():
+    log_path = CONFIG_PATH.parent / "trade_log.csv"
+    if log_path.exists():
+        return send_file(log_path, as_attachment=True)
+    return "Log file not found.", 404
+
+@app.route('/panic_exit', methods=['POST'])
+def panic_exit():
+    global trader
+    try:
+        if trader:
+            trader.api.close_all_positions()
+            trader.api.cancel_all_orders()
+            return jsonify({"status": "success", "message": "EMERGENCY EXIT COMPLETE."})
+        return jsonify({"status": "error", "message": "Trader not active."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- NEW: Ensure scanner starts even under Gunicorn ---
+def start_scanner():
+    logger.info("📡 Initializing Global Background Task...")
+    socketio.start_background_task(market_scanner)
+
+# This triggers the scanner once when the first worker boots up
+with app.app_context():
+    start_scanner()
+    
 if __name__ == '__main__':
-    # Startup Console Log
-    logger.info("✅ Starting Sniper AI Platinum...")
+    # Start scanner as a SocketIO background task for better Eventlet compatibility
+    socketio.start_background_task(market_scanner)
     
-    # Telegram Startup Message
-    threading.Thread(target=send_telegram_msg, args=("✅ *Sniper AI Platinum is Online*",), daemon=True).start()
-    
-    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5001")).start()
-    threading.Thread(target=market_scanner, daemon=True).start()
+    Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5001")).start()
     socketio.run(app, host='127.0.0.1', port=5001, debug=False)

@@ -3,14 +3,15 @@
 """DNS Versioned Zones."""
 
 import collections
-import threading
-from typing import Callable, Deque, Set, cast
+try:
+    import threading as _threading
+except ImportError:  # pragma: no cover
+    import dummy_threading as _threading    # type: ignore
 
 import dns.exception
+import dns.immutable
 import dns.name
-import dns.node
 import dns.rdataclass
-import dns.rdataset
 import dns.rdatatype
 import dns.rdtypes.ANY.SOA
 import dns.zone
@@ -29,26 +30,16 @@ ImmutableVersion = dns.zone.ImmutableVersion
 Transaction = dns.zone.Transaction
 
 
-class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
-    __slots__ = [
-        "_versions",
-        "_versions_lock",
-        "_write_txn",
-        "_write_waiters",
-        "_write_event",
-        "_pruning_policy",
-        "_readers",
-    ]
+class Zone(dns.zone.Zone):
 
-    node_factory: Callable[[], dns.node.Node] = Node
+    __slots__ = ['_versions', '_versions_lock', '_write_txn',
+                 '_write_waiters', '_write_event', '_pruning_policy',
+                 '_readers']
 
-    def __init__(
-        self,
-        origin: dns.name.Name | str | None,
-        rdclass: dns.rdataclass.RdataClass = dns.rdataclass.IN,
-        relativize: bool = True,
-        pruning_policy: Callable[["Zone", Version], bool | None] | None = None,
-    ):
+    node_factory = Node
+
+    def __init__(self, origin, rdclass=dns.rdataclass.IN, relativize=True,
+                 pruning_policy=None):
         """Initialize a versioned zone object.
 
         *origin* is the origin of the zone.  It may be a ``dns.name.Name``,
@@ -60,30 +51,28 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
         *relativize*, a ``bool``, determine's whether domain names are
         relativized to the zone's origin.  The default is ``True``.
 
-        *pruning policy*, a function taking a ``Zone`` and a ``Version`` and returning
-        a ``bool``, or ``None``.  Should the version be pruned?  If ``None``,
+        *pruning policy*, a function taking a `Version` and returning
+        a `bool`, or `None`.  Should the version be pruned?  If `None`,
         the default policy, which retains one version is used.
         """
         super().__init__(origin, rdclass, relativize)
-        self._versions: Deque[Version] = collections.deque()
-        self._version_lock = threading.Lock()
+        self._versions = collections.deque()
+        self._version_lock = _threading.Lock()
         if pruning_policy is None:
             self._pruning_policy = self._default_pruning_policy
         else:
             self._pruning_policy = pruning_policy
-        self._write_txn: Transaction | None = None
-        self._write_event: threading.Event | None = None
-        self._write_waiters: Deque[threading.Event] = collections.deque()
-        self._readers: Set[Transaction] = set()
-        self._commit_version_unlocked(
-            None, WritableVersion(self, replacement=True), origin
-        )
+        self._write_txn = None
+        self._write_event = None
+        self._write_waiters = collections.deque()
+        self._readers = set()
+        self._commit_version_unlocked(None,
+                                      WritableVersion(self, replacement=True),
+                                      origin)
 
-    def reader(
-        self, id: int | None = None, serial: int | None = None
-    ) -> Transaction:  # pylint: disable=arguments-differ
+    def reader(self, id=None, serial=None):  # pylint: disable=arguments-differ
         if id is not None and serial is not None:
-            raise ValueError("cannot specify both id and serial")
+            raise ValueError('cannot specify both id and serial')
         with self._version_lock:
             if id is not None:
                 version = None
@@ -92,33 +81,29 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
                         version = v
                         break
                 if version is None:
-                    raise KeyError("version not found")
+                    raise KeyError('version not found')
             elif serial is not None:
                 if self.relativize:
                     oname = dns.name.empty
                 else:
-                    assert self.origin is not None
                     oname = self.origin
                 version = None
                 for v in reversed(self._versions):
                     n = v.nodes.get(oname)
                     if n:
                         rds = n.get_rdataset(self.rdclass, dns.rdatatype.SOA)
-                        if rds is None:
-                            continue
-                        soa = cast(dns.rdtypes.ANY.SOA.SOA, rds[0])
-                        if rds and soa.serial == serial:
+                        if rds and rds[0].serial == serial:
                             version = v
                             break
                 if version is None:
-                    raise KeyError("serial not found")
+                    raise KeyError('serial not found')
             else:
                 version = self._versions[-1]
             txn = Transaction(self, False, version)
             self._readers.add(txn)
             return txn
 
-    def writer(self, replacement: bool = False) -> Transaction:
+    def writer(self, replacement=False):
         event = None
         while True:
             with self._version_lock:
@@ -132,16 +117,15 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
                     # give up the lock, so that we hold the lock as
                     # short a time as possible.  This is why we call
                     # _setup_version() below.
-                    self._write_txn = Transaction(
-                        self, replacement, make_immutable=True
-                    )
+                    self._write_txn = Transaction(self, replacement,
+                                                  make_immutable=True)
                     # give up our exclusive right to make a Transaction
                     self._write_event = None
                     break
                 # Someone else is writing already, so we will have to
                 # wait, but we want to do the actual wait outside the
                 # lock.
-                event = threading.Event()
+                event = _threading.Event()
                 self._write_waiters.append(event)
             # wait (note we gave up the lock!)
             #
@@ -152,7 +136,7 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
             #
             # This is not a problem with Threading module threads as
             # they cannot be canceled, but could be an issue with trio
-            # tasks when we do the async version of writer().
+            # or curio tasks when we do the async version of writer().
             # I.e. we'd need to do something like:
             #
             # try:
@@ -175,7 +159,6 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
     # pylint: disable=unused-argument
     def _default_pruning_policy(self, zone, version):
         return True
-
     # pylint: enable=unused-argument
 
     def _prune_versions_unlocked(self):
@@ -188,35 +171,28 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
         # Note our definition of least_kept also ensures we do not try to
         # delete the greatest version.
         if len(self._readers) > 0:
-            least_kept = min(txn.version.id for txn in self._readers)  # pyright: ignore
+            least_kept = min(txn.version.id for txn in self._readers)
         else:
             least_kept = self._versions[-1].id
-        while self._versions[0].id < least_kept and self._pruning_policy(
-            self, self._versions[0]
-        ):
+        while self._versions[0].id < least_kept and \
+              self._pruning_policy(self, self._versions[0]):
             self._versions.popleft()
 
-    def set_max_versions(self, max_versions: int | None) -> None:
+    def set_max_versions(self, max_versions):
         """Set a pruning policy that retains up to the specified number
         of versions
         """
         if max_versions is not None and max_versions < 1:
-            raise ValueError("max versions must be at least 1")
+            raise ValueError('max versions must be at least 1')
         if max_versions is None:
-            # pylint: disable=unused-argument
-            def policy(zone, _):  # pyright: ignore
+            def policy(*_):
                 return False
-
         else:
-
             def policy(zone, _):
                 return len(zone._versions) > max_versions
-
         self.set_pruning_policy(policy)
 
-    def set_pruning_policy(
-        self, policy: Callable[["Zone", Version], bool | None] | None
-    ) -> None:
+    def set_pruning_policy(self, policy):
         """Set the pruning policy for the zone.
 
         The *policy* function takes a `Version` and returns `True` if
@@ -269,52 +245,30 @@ class Zone(dns.zone.Zone):  # lgtm[py/missing-equals]
             id = 1
         return id
 
-    def find_node(
-        self, name: dns.name.Name | str, create: bool = False
-    ) -> dns.node.Node:
+    def find_node(self, name, create=False):
         if create:
             raise UseTransaction
         return super().find_node(name)
 
-    def delete_node(self, name: dns.name.Name | str) -> None:
+    def delete_node(self, name):
         raise UseTransaction
 
-    def find_rdataset(
-        self,
-        name: dns.name.Name | str,
-        rdtype: dns.rdatatype.RdataType | str,
-        covers: dns.rdatatype.RdataType | str = dns.rdatatype.NONE,
-        create: bool = False,
-    ) -> dns.rdataset.Rdataset:
+    def find_rdataset(self, name, rdtype, covers=dns.rdatatype.NONE,
+                      create=False):
         if create:
             raise UseTransaction
         rdataset = super().find_rdataset(name, rdtype, covers)
         return dns.rdataset.ImmutableRdataset(rdataset)
 
-    def get_rdataset(
-        self,
-        name: dns.name.Name | str,
-        rdtype: dns.rdatatype.RdataType | str,
-        covers: dns.rdatatype.RdataType | str = dns.rdatatype.NONE,
-        create: bool = False,
-    ) -> dns.rdataset.Rdataset | None:
+    def get_rdataset(self, name, rdtype, covers=dns.rdatatype.NONE,
+                     create=False):
         if create:
             raise UseTransaction
         rdataset = super().get_rdataset(name, rdtype, covers)
-        if rdataset is not None:
-            return dns.rdataset.ImmutableRdataset(rdataset)
-        else:
-            return None
+        return dns.rdataset.ImmutableRdataset(rdataset)
 
-    def delete_rdataset(
-        self,
-        name: dns.name.Name | str,
-        rdtype: dns.rdatatype.RdataType | str,
-        covers: dns.rdatatype.RdataType | str = dns.rdatatype.NONE,
-    ) -> None:
+    def delete_rdataset(self, name, rdtype, covers=dns.rdatatype.NONE):
         raise UseTransaction
 
-    def replace_rdataset(
-        self, name: dns.name.Name | str, replacement: dns.rdataset.Rdataset
-    ) -> None:
+    def replace_rdataset(self, name, replacement):
         raise UseTransaction

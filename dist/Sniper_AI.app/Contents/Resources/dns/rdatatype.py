@@ -17,15 +17,11 @@
 
 """DNS Rdata Types."""
 
-from typing import Dict
-
 import dns.enum
 import dns.exception
 
-
 class RdataType(dns.enum.IntEnum):
     """DNS Rdata Type"""
-
     TYPE0 = 0
     NONE = 0
     A = 1
@@ -86,7 +82,6 @@ class RdataType(dns.enum.IntEnum):
     ZONEMD = 63
     SVCB = 64
     HTTPS = 65
-    DSYNC = 66
     SPF = 99
     UNSPEC = 103
     NID = 104
@@ -106,8 +101,6 @@ class RdataType(dns.enum.IntEnum):
     CAA = 257
     AVC = 258
     AMTRELAY = 260
-    RESINFO = 261
-    WALLET = 262
     TA = 32768
     DLV = 32769
 
@@ -124,46 +117,23 @@ class RdataType(dns.enum.IntEnum):
         return "TYPE"
 
     @classmethod
-    def _extra_from_text(cls, text):
-        if text.find("-") >= 0:
-            try:
-                return cls[text.replace("-", "_")]
-            except KeyError:  # pragma: no cover
-                pass
-        return _registered_by_text.get(text)
-
-    @classmethod
-    def _extra_to_text(cls, value, current_text):
-        if current_text is None:
-            return _registered_by_value.get(value)
-        if current_text.find("_") >= 0:
-            return current_text.replace("_", "-")
-        return current_text
-
-    @classmethod
     def _unknown_exception_class(cls):
         return UnknownRdatatype
 
-
-_registered_by_text: Dict[str, RdataType] = {}
-_registered_by_value: Dict[RdataType, str] = {}
+_registered_by_text = {}
+_registered_by_value = {}
 
 _metatypes = {RdataType.OPT}
 
-_singletons = {
-    RdataType.SOA,
-    RdataType.NXT,
-    RdataType.DNAME,
-    RdataType.NSEC,
-    RdataType.CNAME,
-}
+_singletons = {RdataType.SOA, RdataType.NXT, RdataType.DNAME,
+               RdataType.NSEC, RdataType.CNAME}
 
 
 class UnknownRdatatype(dns.exception.DNSException):
     """DNS resource record type is unknown."""
 
 
-def from_text(text: str) -> RdataType:
+def from_text(text):
     """Convert text into a DNS rdata type value.
 
     The input text can be a defined DNS RR type mnemonic or
@@ -175,13 +145,20 @@ def from_text(text: str) -> RdataType:
 
     Raises ``ValueError`` if the rdata type value is not >= 0 and <= 65535.
 
-    Returns a ``dns.rdatatype.RdataType``.
+    Returns an ``int``.
     """
 
-    return RdataType.from_text(text)
+    text = text.upper().replace('-', '_')
+    try:
+        return RdataType.from_text(text)
+    except UnknownRdatatype:
+        registered_type = _registered_by_text.get(text)
+        if registered_type:
+            return registered_type
+        raise
 
 
-def to_text(value: RdataType) -> str:
+def to_text(value):
     """Convert a DNS rdata type value to text.
 
     If the value has a known mnemonic, it will be used, otherwise the
@@ -192,13 +169,18 @@ def to_text(value: RdataType) -> str:
     Returns a ``str``.
     """
 
-    return RdataType.to_text(value)
+    text = RdataType.to_text(value)
+    if text.startswith("TYPE"):
+        registered_text = _registered_by_value.get(value)
+        if registered_text:
+            text = registered_text
+    return text.replace('_', '-')
 
 
-def is_metatype(rdtype: RdataType) -> bool:
+def is_metatype(rdtype):
     """True if the specified type is a metatype.
 
-    *rdtype* is a ``dns.rdatatype.RdataType``.
+    *rdtype* is an ``int``.
 
     The currently defined metatypes are TKEY, TSIG, IXFR, AXFR, MAILA,
     MAILB, ANY, and OPT.
@@ -209,7 +191,7 @@ def is_metatype(rdtype: RdataType) -> bool:
     return (256 > rdtype >= 128) or rdtype in _metatypes
 
 
-def is_singleton(rdtype: RdataType) -> bool:
+def is_singleton(rdtype):
     """Is the specified type a singleton type?
 
     Singleton types can only have a single rdata in an rdataset, or a single
@@ -227,14 +209,11 @@ def is_singleton(rdtype: RdataType) -> bool:
         return True
     return False
 
-
 # pylint: disable=redefined-outer-name
-def register_type(
-    rdtype: RdataType, rdtype_text: str, is_singleton: bool = False
-) -> None:
+def register_type(rdtype, rdtype_text, is_singleton=False):
     """Dynamically register an rdatatype.
 
-    *rdtype*, a ``dns.rdatatype.RdataType``, the rdatatype to register.
+    *rdtype*, an ``int``, the rdatatype to register.
 
     *rdtype_text*, a ``str``, the textual form of the rdatatype.
 
@@ -246,7 +225,6 @@ def register_type(
     _registered_by_value[rdtype] = rdtype_text
     if is_singleton:
         _singletons.add(rdtype)
-
 
 ### BEGIN generated RdataType constants
 
@@ -310,7 +288,6 @@ CSYNC = RdataType.CSYNC
 ZONEMD = RdataType.ZONEMD
 SVCB = RdataType.SVCB
 HTTPS = RdataType.HTTPS
-DSYNC = RdataType.DSYNC
 SPF = RdataType.SPF
 UNSPEC = RdataType.UNSPEC
 NID = RdataType.NID
@@ -330,8 +307,6 @@ URI = RdataType.URI
 CAA = RdataType.CAA
 AVC = RdataType.AVC
 AMTRELAY = RdataType.AMTRELAY
-RESINFO = RdataType.RESINFO
-WALLET = RdataType.WALLET
 TA = RdataType.TA
 DLV = RdataType.DLV
 

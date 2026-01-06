@@ -1,3 +1,4 @@
+import os
 import eventlet
 eventlet.monkey_patch()
 import sys, os, json, logging, threading, time, requests, webbrowser
@@ -41,15 +42,20 @@ def get_config_path():
 CONFIG_PATH = get_config_path()
 
 # --- 2. CONFIGURATION ---
+# --- 2. CONFIGURATION ---
 def load_config():
+    cfg = {}
     if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, 'r') as f: return json.load(f)
-    return {
-        "trading_enabled": False, "short_enabled": False, "app_name": "Sniper AI",
-        "alpaca_api_key": "", "alpaca_secret_key": "", "broker": "paper",
-        "risk_per_trade": 1.0, "current_symbol": "BTCUSD"
-    }
+        with open(CONFIG_PATH, 'r') as f: 
+            cfg = json.load(f)
+    
+    # Cloud variable overrides
+    cfg["alpaca_api_key"] = os.getenv("ALPACA_API_KEY", cfg.get("alpaca_api_key", ""))
+    cfg["alpaca_secret_key"] = os.getenv("ALPACA_SECRET_KEY", cfg.get("alpaca_secret_key", ""))
+    cfg["current_symbol"] = cfg.get("current_symbol", "BTCUSD") # Default if missing
+    return cfg
 
+# ADD THIS LINE:
 CONFIG = load_config()
 
 from src.indicator_calculator import calculate_indicators
@@ -266,7 +272,7 @@ with app.app_context():
     
 if __name__ == '__main__':
     # Start scanner as a SocketIO background task for better Eventlet compatibility
-    socketio.start_background_task(market_scanner)
+    #socketio.start_background_task(market_scanner)
     
     Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5001")).start()
     socketio.run(app, host='127.0.0.1', port=5001, debug=False)

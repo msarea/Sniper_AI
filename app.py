@@ -205,11 +205,16 @@ def index(symbol="BTC/USD"):
         return "", 204
 
     global current_symbol
-    # 2. Clean the symbol (Remove / or - for Alpaca compatibility)
-    if "USD" in symbol.upper() and "/" not in symbol:
-        symbol = symbol.upper().replace("USD", "/USD")
+    # Standardize the symbol
+    symbol = symbol.upper().replace('-', '')
     
-    current_symbol = symbol.upper()
+    # Auto-correct Crypto format for Alpaca
+    if "USD" in symbol and "/" not in symbol:
+        symbol = symbol.replace("USD", "/USD")
+    
+    current_symbol = symbol
+    
+    # We pass the cleaned symbol to the frontend
     return render_template('index.html', config=CONFIG, initial_symbol=current_symbol)
 
 @app.route('/change_symbol', methods=['POST'])

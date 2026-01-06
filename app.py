@@ -1,6 +1,6 @@
 import os
 import eventlet
-eventlet.monkey_patch()
+eventlet.monkey_patch(thread=False)
 import sys, os, json, logging, threading, time, requests, webbrowser
 import pandas as pd
 import numpy as np
@@ -276,7 +276,9 @@ def panic_exit():
 # --- NEW: Ensure scanner starts even under Gunicorn ---
 def start_scanner():
     # Adding a small delay helps Eventlet settle before starting the loop
-    eventlet.sleep(2) 
+    eventlet.sleep(5)
+
+    init_trader()
     logger.info("📡 Initializing Global Background Task...")
     socketio.start_background_task(market_scanner)
 

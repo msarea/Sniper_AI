@@ -49,10 +49,15 @@ def load_config():
         with open(CONFIG_PATH, 'r') as f: 
             cfg = json.load(f)
     
-    # Cloud variable overrides
-    cfg["alpaca_api_key"] = os.getenv("ALPACA_API_KEY", cfg.get("alpaca_api_key", ""))
-    cfg["alpaca_secret_key"] = os.getenv("ALPACA_SECRET_KEY", cfg.get("alpaca_secret_key", ""))
-    cfg["current_symbol"] = cfg.get("current_symbol", "BTCUSD") # Default if missing
+    # Check for the standard names AND the SDK-specific names
+    # os.getenv checks Render's environment variables first
+    api_key = os.getenv("ALPACA_API_KEY") or os.getenv("APCA_API_KEY_ID") or cfg.get("alpaca_api_key", "")
+    api_secret = os.getenv("ALPACA_SECRET_KEY") or os.getenv("APCA_API_SECRET_KEY") or cfg.get("alpaca_secret_key", "")
+    
+    cfg["alpaca_api_key"] = api_key
+    cfg["alpaca_secret_key"] = api_secret
+    cfg["current_symbol"] = cfg.get("current_symbol", "BTCUSD")
+    
     return cfg
 
 # ADD THIS LINE:
@@ -263,16 +268,20 @@ def panic_exit():
 
 # --- NEW: Ensure scanner starts even under Gunicorn ---
 def start_scanner():
+    # Adding a small delay helps Eventlet settle before starting the loop
+    eventlet.sleep(2) 
     logger.info("📡 Initializing Global Background Task...")
     socketio.start_background_task(market_scanner)
 
-# This triggers the scanner once when the first worker boots up
-with app.app_context():
-    start_scanner()
-    
+# Change the with app.app_context() block to this:
+@app.before_request
+def initialize_scanner():
+    # This ensure the scanner only starts once
+    if not hasattr(app, 'scanner_started'):
+        socketio.start_background_task(start_scanner)
+        app.scanner_started = True
+
 if __name__ == '__main__':
-    # Start scanner as a SocketIO background task for better Eventlet compatibility
-    #socketio.start_background_task(market_scanner)
-    
-    Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5001")).start()
+    # (Optional) Remove the start_background_task here as discussed before
     socketio.run(app, host='127.0.0.1', port=5001, debug=False)
+    

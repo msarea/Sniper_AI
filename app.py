@@ -96,7 +96,7 @@ socketio = SocketIO(app,
                    ping_interval=25)
 
 # --- GLOBAL STATE ---
-current_symbol = CONFIG.get('current_symbol', "BTCUSD")
+current_symbol = CONFIG.get('current_symbol', "BTC/USD")
 trader = None
 session_start_equity = 0.0
 NY_TZ = pytz.timezone('America/New_York')
@@ -199,15 +199,17 @@ def market_scanner():
 
 @app.route('/')
 @app.route('/<symbol>')
-def index(symbol="BTCUSD"):
+def index(symbol="BTC/USD"):
     # 1. Ignore favicon requests so they don't change the symbol
     if "favicon" in symbol.lower():
         return "", 204
 
     global current_symbol
     # 2. Clean the symbol (Remove / or - for Alpaca compatibility)
-    current_symbol = symbol.upper().replace('-', '').replace('/', '')
+    if "USD" in symbol.upper() and "/" not in symbol:
+        symbol = symbol.upper().replace("USD", "/USD")
     
+    current_symbol = symbol.upper()
     return render_template('index.html', config=CONFIG, initial_symbol=current_symbol)
 
 @app.route('/change_symbol', methods=['POST'])

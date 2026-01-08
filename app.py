@@ -112,7 +112,6 @@ def init_trader():
         except Exception as e:
             logger.error(f"❌ Broker Connection Failed: {e}")
 
-init_trader()
 
 
 

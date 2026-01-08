@@ -273,23 +273,28 @@ def panic_exit():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # --- NEW: Ensure scanner starts even under Gunicorn ---
-def start_scanner():
-    # Adding a small delay helps Eventlet settle before starting the loop
-    eventlet.sleep(5)
+# --- THE FINAL PRODUCTION STARTUP LOGIC ---
 
-    init_trader()
-    logger.info("📡 Initializing Global Background Task...")
-    socketio.start_background_task(market_scanner)
+def start_scanner(app_context):
+    # This allows the background thread to see your CONFIG and other Flask data
+    with app_context:
+        logger.info("⏳ Waiting for server to settle...")
+        eventlet.sleep(5) 
+        
+        # 1. Connect to Alpaca safely inside the context
+        init_trader() 
+        
+        # 2. Start the scanner loop
+        logger.info("📡 Initializing Global Background Task...")
+        market_scanner()
 
-# Change the with app.app_context() block to this:
 @app.before_request
 def initialize_scanner():
-    # This ensure the scanner only starts once
+    # We use app.app_context() to bridge the gap between Flask and Eventlet
     if not hasattr(app, 'scanner_started'):
-        socketio.start_background_task(start_scanner)
         app.scanner_started = True
+        socketio.start_background_task(start_scanner, app.app_context())
 
 if __name__ == '__main__':
-    # (Optional) Remove the start_background_task here as discussed before
+    # Local development settings
     socketio.run(app, host='127.0.0.1', port=5001, debug=False)
-    

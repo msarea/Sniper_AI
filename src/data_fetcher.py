@@ -36,38 +36,42 @@ def fetch_market_data(symbol: str, config: dict, period: str = "7d", interval: s
     except Exception:
         pass
 
-    # 2. --- FAILOVER: ALPACA (STRICT 2025 SDK RULES) ---
+    # 2. --- FAILOVER: ALPACA (STRICT 2026 SDK RULES) ---
     try:
-        from app import CONFIG
-        api = REST(CONFIG['alpaca_api_key'], CONFIG['alpaca_secret_key'], base_url="https://paper-api.alpaca.markets")
+        # Use the passed 'config' argument instead of importing from app.py
+        api_key = config.get('alpaca_api_key')
+        api_secret = config.get('alpaca_secret_key')
+        
+        # Explicitly set the base_url to paper to avoid 401 Unauthorized errors
+        api = REST(api_key, api_secret, base_url="https://paper-api.alpaca.markets")
         
         search_symbol = f"{clean_symbol}/USD" if clean_symbol in ['BTC', 'ETH', 'SOL'] else clean_symbol
-        val = int(''.join(filter(str.isdigit, interval)))
+        
+        # Standardize timeframe to 5m if interval is weird
+        val = 5 if "51" in interval else int(''.join(filter(str.isdigit, interval)))
         tf_unit = TimeFrame.Minute if "m" in interval.lower() else TimeFrame.Hour
         
-        # INCREASED LOOKBACK: ensures 200-period MA is fully primed
         start_time = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
         if clean_symbol in ['BTC', 'ETH', 'SOL']:
-            # 1000 bars ensures sufficient 'warm-up' data for calculations
+            # Force Crypto endpoint
             bars_obj = api.get_crypto_bars(symbol=[search_symbol], timeframe=TimeFrame(val, tf_unit), start=start_time, limit=1000)
         else:
+            # Force Stock endpoint
             bars_obj = api.get_bars(symbol=[search_symbol], timeframe=TimeFrame(val, tf_unit), start=start_time, limit=1000)
 
         bars = bars_obj.df
-        
         if not bars.empty:
             df = bars.rename(columns={'open':'Open', 'high':'High', 'low':'Low', 'close':'Close', 'volume':'Volume'})
             df.index = pd.to_datetime(df.index, utc=True)
             
-            # CRITICAL FIX: Properly flatten Alpaca's MultiIndex for the chart and calculator
             if isinstance(df.index, pd.MultiIndex):
                 df = df.xs(search_symbol, level=0)
 
-            logger.info(f"🛡️ {symbol}: Alpaca Failover Success (Primed with 1000 bars).")
+            logger.info(f"🛡️ {symbol}: Alpaca Failover Success.")
             return df
                 
     except Exception as e:
-        logger.error(f"❌ Critical Failure: {e}")
-    
+        logger.error(f"❌ Alpaca Failover Failed: {e}")
+        
     return pd.DataFrame()
